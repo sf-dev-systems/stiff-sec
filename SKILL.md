@@ -1,5 +1,11 @@
 # AgentSkill: Stiff-Sec (Hex-Stiff Hardener) 🛡️
 
+> Prevent config tampering, secret leaks, and unsafe execution in OpenClaw.
+
+- 🔒 **Backup-first hardening** — timestamped backups before every change
+- 🔍 **Tamper detection** — SHA-256 checksum catches unauthorized config changes
+- 🚨 **Credential scan** — finds plaintext tokens, keys, and secrets in your config
+
 Audit and aggressively harden OpenClaw setups. Built by OniBoniBot (👹🐰).
 
 ## Why Stiff-Sec?
