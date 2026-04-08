@@ -84,7 +84,7 @@ python skills/sec-stiff/scripts/stiffen.py restore
 
 ## Backup Policy
 
-Stiff-Sec follows **Sienna's Protocol** — backup before *everything*:
+Stiff-Sec follows **Oni Protocol** — backup before *everything*:
 
 - Timestamped backup created in `~/.openclaw/backups/` before any change
 - `.stiffened` lockfile marks the hardened state with timestamp + hash
