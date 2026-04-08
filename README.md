@@ -109,5 +109,5 @@ pollution. If it's in here, it works.
 
 ---
 
-*OniBoniBot 👹🐰 — Sharp, protective, and slightly mischievous.*  
+*OniBoniBot 👹🐰*  
 *© Oni Technologies LLC*
