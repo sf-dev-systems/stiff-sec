@@ -71,14 +71,38 @@ not just `apiKey`, but `botToken`, `auth.token`, `secret`, `password`,
 
 ```bash
 # Audit only (safe, read-only)
-python skills/sec-stiff/scripts/audit.py audit
+python scripts/audit.py audit
 
-# Harden (backs up first, then applies)
-python skills/sec-stiff/scripts/stiffen.py apply
+# Harden with default exec policy (on-miss)
+python scripts/stiffen.py apply
 
-# Undo everything
-python skills/sec-stiff/scripts/stiffen.py restore
+# Harden with explicit exec policy
+python scripts/stiffen.py apply --exec-ask always
+python scripts/stiffen.py apply --exec-ask on-miss
+python scripts/stiffen.py apply --exec-ask off
+
+# Harden non-interactively (CI/automation)
+python scripts/stiffen.py apply --yes --exec-ask on-miss
+
+# Undo last hardening
+python scripts/stiffen.py restore
 ```
+
+---
+
+## Governance: `exec.ask` Policy
+
+`tools.exec.ask` controls whether the agent prompts for approval before running shell commands. Stiff-Sec does **not** hardcode this value — it's a governance decision for the config owner.
+
+| Value | Behavior |
+|:------|:---------|
+| `always` | Every exec requires explicit approval — maximum control |
+| `on-miss` | Prompts only when no prior approval exists — balanced |
+| `off` | No prompts — use only in fully trusted automation |
+
+Pass your choice via `--exec-ask`. If unsure, `on-miss` is the safe default.
+
+> **Note:** `gateway.nodes.denyCommands` is intentionally **not** auto-written by Stiff-Sec. This is a schema/profile decision that varies by OpenClaw release — set it manually in your config.
 
 ---
 

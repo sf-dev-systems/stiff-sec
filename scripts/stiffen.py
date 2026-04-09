@@ -1,38 +1,45 @@
-import os, sys, json, io, stat, shutil, time, hashlib
+import argparse, os, sys, json, io, shutil, time, hashlib
 
 # Force UTF-8 for console output on Windows
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-def confirm(prompt: str) -> bool:
-    """Require explicit user confirmation before destructive changes."""
+CONFIG_PATH   = os.path.expanduser("~/.openclaw/openclaw.json")
+BACKUP_DIR    = os.path.expanduser("~/.openclaw/backups")
+LOCKFILE_PATH = os.path.expanduser("~/.openclaw/.stiffened")
+
+EXEC_ASK_VALUES = {"always", "on-miss", "off"}
+
+
+def confirm(prompt: str, yes: bool = False) -> bool:
+    if yes:
+        print(f"  [--yes] Auto-confirmed: {prompt}")
+        return True
     print(f"\n⚠️  {prompt}")
     answer = input("   Type 'yes' to continue, anything else to abort: ").strip().lower()
     return answer == "yes"
 
-def stiffen():
-    print("👹 OniBoniBot Stiffener v2: Always Backup First...")
 
-    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
-    backup_dir = os.path.expanduser("~/.openclaw/backups")
-    os.makedirs(backup_dir, exist_ok=True)
+def stiffen(exec_ask: str = "on-miss", yes: bool = False) -> int:
+    print("👹 OniBoniBot Stiffener v2.1: Always Backup First...")
 
-    if not os.path.exists(config_path):
+    if not os.path.exists(CONFIG_PATH):
         print("❌ Error: No openclaw.json to stiffen.")
-        sys.exit(1)
+        return 1
 
-    # Require confirmation before making changes
-    if not confirm("This will modify ~/.openclaw/openclaw.json and create a backup. Proceed?"):
+    if not confirm("This will modify ~/.openclaw/openclaw.json and create a backup. Proceed?", yes):
         print("   Aborted.")
-        sys.exit(0)
+        return 0
 
+    os.makedirs(BACKUP_DIR, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.join(backup_dir, f"openclaw.json.{timestamp}.bak")
-    shutil.copy2(config_path, backup_path)
+    backup_path = os.path.join(BACKUP_DIR, f"openclaw.json.{timestamp}.bak")
+    shutil.copy2(CONFIG_PATH, backup_path)
     print(f"✅ Backup created: {backup_path}")
 
     print("👹 Hardening the Vault...")
     try:
-        with open(config_path, 'r') as f:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             config = json.load(f)
 
         # Lock trusted proxies
@@ -47,75 +54,91 @@ def stiffen():
                 deny.append(t)
         print("🔒 Tools: Set elevated=false, deny list updated.")
 
-        # exec.ask
-        config['tools'].setdefault('exec', {})['ask'] = "on-miss"
-        print("🔒 Exec: Set tools.exec.ask to 'on-miss'.")
+        # exec.ask — governance choice, not hardcoded
+        config['tools'].setdefault('exec', {})['ask'] = exec_ask
+        print(f"🔒 Exec: Set tools.exec.ask to '{exec_ask}' (policy choice).")
 
-        # Valid node deny commands only
-        config['gateway'].setdefault('nodes', {})['denyCommands'] = [
-            "canvas.eval", "canvas.present"
-        ]
-        print("🔒 Nodes: Applied strict denyCommands.")
+        # NOTE: gateway.nodes.denyCommands intentionally NOT auto-written.
+        # This is a schema/profile decision for the config owner, not Stiff-Sec.
 
-        with open(config_path, 'w') as f:
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2)
         print("✅ Config stiffened.")
 
     except Exception as e:
         print(f"❌ Error during stiffen: {e}")
-        sys.exit(1)
+        return 1
 
     # Write lockfile with SHA-256
-    with open(config_path, 'rb') as f:
+    with open(CONFIG_PATH, 'rb') as f:
         sha = hashlib.sha256(f.read()).hexdigest().upper()
 
-    lockfile_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        ".stiffened"
-    )
-    with open(lockfile_path, "w") as f:
+    with open(LOCKFILE_PATH, "w", encoding='utf-8') as f:
         f.write(f"stiffened_at: {timestamp}\n")
         f.write(f"sha256: {sha}\n")
         f.write(f"backup: {backup_path}\n")
+        f.write(f"exec_ask: {exec_ask}\n")
 
-    print(f"🔒 Lockfile written with SHA-256: {sha[:16]}...")
+    print(f"🔒 Lockfile written: {LOCKFILE_PATH}")
+    print(f"   SHA-256: {sha[:16]}...")
     print(f"👹 Done. UNDO: python scripts/stiffen.py restore")
-    sys.exit(0)
+    return 0
 
-def restore():
+
+def restore(yes: bool = False) -> int:
     print("👹 OniBoniBot: Reversing the Hex-Stiff...")
 
-    backup_dir = os.path.expanduser("~/.openclaw/backups")
-    if not os.path.exists(backup_dir):
+    if not os.path.exists(BACKUP_DIR):
         print("❌ No backups found.")
-        sys.exit(1)
+        return 1
 
-    backups = sorted([f for f in os.listdir(backup_dir) if f.startswith("openclaw.json")], reverse=True)
+    backups = sorted(
+        [f for f in os.listdir(BACKUP_DIR) if f.startswith("openclaw.json")],
+        reverse=True
+    )
     if not backups:
         print("❌ No openclaw.json backups found.")
+        return 1
+
+    latest = os.path.join(BACKUP_DIR, backups[0])
+    if not confirm(f"This will restore {latest} → {CONFIG_PATH}. Proceed?", yes):
+        print("   Aborted.")
+        return 0
+
+    shutil.copy2(latest, CONFIG_PATH)
+    print(f"✅ Restored from: {latest}")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="stiffen.py",
+        description="Stiff-Sec: OpenClaw config hardener"
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    apply_p = sub.add_parser("apply", help="Harden openclaw.json")
+    apply_p.add_argument(
+        "--exec-ask",
+        choices=list(EXEC_ASK_VALUES),
+        default="on-miss",
+        help="Value for tools.exec.ask (governance choice, default: on-miss)"
+    )
+    apply_p.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+
+    restore_p = sub.add_parser("restore", help="Restore last backup")
+    restore_p.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+
+    args = parser.parse_args()
+
+    if args.command == "apply":
+        sys.exit(stiffen(exec_ask=args.exec_ask, yes=args.yes))
+    elif args.command == "restore":
+        sys.exit(restore(yes=args.yes))
+    else:
+        parser.print_help()
         sys.exit(1)
 
-    latest_backup = os.path.join(backup_dir, backups[0])
-    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
-
-    if not confirm(f"This will restore {latest_backup} → {config_path}. Proceed?"):
-        print("   Aborted.")
-        sys.exit(0)
-
-    shutil.copy2(latest_backup, config_path)
-    print(f"✅ Restored from: {latest_backup}")
-    sys.exit(0)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "apply":
-            stiffen()
-        elif sys.argv[1] == "restore":
-            restore()
-        else:
-            print(f"Unknown command: {sys.argv[1]}")
-            print("Usage: python stiffen.py [apply|restore]")
-            sys.exit(1)
-    else:
-        print("Usage: python stiffen.py [apply|restore]")
-        sys.exit(1)
+    main()
