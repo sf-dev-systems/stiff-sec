@@ -1,5 +1,5 @@
 # AgentSkill: Stiff-Sec (Hex-Stiff Hardener) 🛡️
-version: 2.0.0
+version: 2.1.0
 
 > Prevent config leaks, unsafe execution, and misconfigured gateways in under 60 seconds.
 
