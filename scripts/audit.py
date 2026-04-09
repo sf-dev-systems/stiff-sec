@@ -3,12 +3,31 @@ import os, sys, json, io, re, hashlib
 # Force UTF-8 for console output on Windows
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# Patterns that indicate a live credential value (20+ char alphanumeric)
+# Patterns that indicate a live credential field
 CREDENTIAL_FIELDS = re.compile(
     r'(apikey|api_key|bottoken|bot_token|auth\.token|token|secret|password|bearer|credential)',
     re.IGNORECASE
 )
-CREDENTIAL_VALUE = re.compile(r'[A-Za-z0-9_\-]{20,}')
+
+# Strict match: 20+ char alphanumeric (fullmatch to reduce noise)
+CREDENTIAL_VALUE = re.compile(r'^[A-Za-z0-9_\-]{20,}$')
+
+# Known placeholder values — skip these to avoid false positives
+PLACEHOLDER_VALUES = {
+    "REDACTED", "YOUR_TOKEN_HERE", "YOUR_API_KEY", "EXAMPLE_TOKEN",
+    "SAMPLE_KEY", "PLACEHOLDER", "INSERT_TOKEN", "ADD_KEY_HERE",
+    "__OPENCLAW_REDACTED__"
+}
+
+def is_placeholder_secret(value: str) -> bool:
+    if not isinstance(value, str):
+        return True
+    v = value.strip().upper()
+    if v in {p.upper() for p in PLACEHOLDER_VALUES}:
+        return True
+    if "example" in v.lower() or "sample" in v.lower() or "your_" in v.lower():
+        return True
+    return False
 
 def scan_for_secrets(obj, path=""):
     """Recursively scan a parsed JSON object for likely plaintext credentials."""
@@ -17,7 +36,7 @@ def scan_for_secrets(obj, path=""):
         for k, v in obj.items():
             current_path = f"{path}.{k}" if path else k
             if CREDENTIAL_FIELDS.search(k):
-                if isinstance(v, str) and CREDENTIAL_VALUE.match(v) and v != "REDACTED":
+                if isinstance(v, str) and CREDENTIAL_VALUE.fullmatch(v) and not is_placeholder_secret(v):
                     findings.append((current_path, v[:6] + "..." + v[-4:]))
             findings.extend(scan_for_secrets(v, current_path))
     elif isinstance(obj, list):
@@ -50,12 +69,12 @@ def verify_checksum(config_path):
     if stored is None:
         print("⚠️  No SHA-256 found in .stiffened — run stiffen.py apply to set baseline.")
     elif current_hash == stored:
-        print(f"✅ Integrity check PASSED — config matches stored hash.")
+        print("✅ Integrity check PASSED — config matches stored hash.")
     else:
-        print(f"🚨 INTEGRITY ALERT: openclaw.json has been modified since last stiffening!")
-        print(f"   Stored : {stored}")
-        print(f"   Current: {current_hash}")
-        print(f"   Action : Review changes or run stiffen.py apply to re-baseline.")
+        print("🚨 INTEGRITY ALERT: openclaw.json has been modified since last stiffening!")
+        print(f"   Stored : {stored[:16]}...{stored[-4:]}")
+        print(f"   Current: {current_hash[:16]}...{current_hash[-4:]}")
+        print("   Action : Review changes or run stiffen.py apply to re-baseline.")
 
 def audit():
     print("🛡️  OniBoniBot Stiff-Sec Audit v2...")
@@ -63,10 +82,9 @@ def audit():
 
     config_path = os.path.expanduser("~/.openclaw/openclaw.json")
 
-    # --- Config file check ---
     if not os.path.exists(config_path):
         print(f"❓ openclaw.json not found at {config_path}")
-        return
+        sys.exit(1)
 
     print(f"✅ Found openclaw.json at {config_path}")
 
@@ -75,7 +93,7 @@ def audit():
             config = json.load(f)
     except Exception as e:
         print(f"❌ ERROR: Could not parse openclaw.json: {e}")
-        return
+        sys.exit(1)
 
     # --- Secret scan ---
     print()
@@ -94,26 +112,48 @@ def audit():
     print("🔒 Checking config integrity against .stiffened lockfile...")
     verify_checksum(config_path)
 
-    # --- Key hardening fields check ---
+    # --- Hardening state check ---
     print()
     print("🔧 Checking hardening state...")
 
     checks = [
-        ("gateway.trustedProxies", lambda c: c.get("gateway", {}).get("trustedProxies") == ["127.0.0.1"]),
-        ("tools.elevated.enabled = false", lambda c: c.get("tools", {}).get("elevated", {}).get("enabled") == False),
-        ("tools.exec.ask = on-miss|always", lambda c: c.get("tools", {}).get("exec", {}).get("ask") in ["on-miss", "always"]),
-        ("tools.deny includes sessions_spawn", lambda c: "sessions_spawn" in c.get("tools", {}).get("deny", [])),
+        ("gateway.trustedProxies = [127.0.0.1]", lambda c: c.get("gateway", {}).get("trustedProxies") == ["127.0.0.1"]),
+        ("tools.elevated.enabled = false",        lambda c: c.get("tools", {}).get("elevated", {}).get("enabled") == False),
+        ("tools.exec.ask = on-miss|always",       lambda c: c.get("tools", {}).get("exec", {}).get("ask") in ["on-miss", "always"]),
+        ("tools.deny includes sessions_spawn",    lambda c: "sessions_spawn" in c.get("tools", {}).get("deny", [])),
     ]
 
+    issues = 0
     for label, check_fn in checks:
-        status = "✅" if check_fn(config) else "⚠️  MISSING"
+        try:
+            ok = check_fn(config)
+        except Exception:
+            ok = False
+        status = "✅" if ok else "⚠️  MISSING"
+        if not ok:
+            issues += 1
         print(f"   {status}  {label}")
+
+    # --- Risk summary ---
+    print()
+    total_issues = len(findings) + issues
+    if total_issues == 0:
+        print("✅ Risk Level: LOW — no findings.")
+    else:
+        print(f"⚠️  Risk Level: ELEVATED — {total_issues} finding(s).")
+        print("   Remediation:")
+        if findings:
+            print("   • Replace plaintext credentials with REDACTED or move to .env")
+        if issues:
+            print("   • Run: python scripts/stiffen.py apply")
 
     print()
     print("🛡️  Audit complete.")
+    sys.exit(2 if total_issues > 0 else 0)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit()
     else:
         print("Usage: python audit.py audit")
+        sys.exit(1)
