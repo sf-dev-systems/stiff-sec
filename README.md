@@ -59,12 +59,6 @@ Audit v2 scans your entire config recursively for plaintext credentials —
 not just `apiKey`, but `botToken`, `auth.token`, `secret`, `password`, 
 `bearer`, and any value over 20 characters that looks like a key.
 
-```
-⚠️  FOUND 1 potential plaintext credential(s):
-   [channels.telegram.botToken] → value starts with: AAFNAA...ZOo
-   Recommendation: replace with REDACTED or move to .env
-```
-
 ---
 
 ## Usage
